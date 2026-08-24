@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.models.qwen3.configuration_qwen3 import Qwen3Config
 from transformers.models.qwen3.modeling_qwen3 import Qwen3DecoderLayer, Qwen3Model, Qwen3PreTrainedModel, Qwen3RMSNorm, Qwen3RotaryEmbedding
 from transformers import GenerationMixin
@@ -37,6 +38,9 @@ class Embedding(nn.Embedding):
         self.lora_A = nn.Parameter(torch.empty(self.vocab_size, rank), requires_grad=True)
         self.lora_B = nn.Parameter(torch.empty(rank, self.dim), requires_grad=True)
 
+        nn.init.normal_(self.lora_A, std=0.02)
+        nn.init.zeros_(self.lora_B)
+
 
 class Block(Qwen3DecoderLayer):
     def __init__(self, config, layer_idx, dropout_rate:float = 0.07):
@@ -46,9 +50,9 @@ class Block(Qwen3DecoderLayer):
     def forward(self, hidden_states, attention_mask = None, position_ids = None, past_key_values = None, use_cache = False, position_embeddings = None, **kwargs):
         return self.dropout(super().forward(hidden_states, attention_mask, position_ids, past_key_values, use_cache, position_embeddings, **kwargs))
 
-class Model(Qwen3PreTrainedModel, Qwen3Model):
+class Model(Qwen3Model):
     def __init__(self, config:Qwen3Config, dropout_rate:float = 0.07, lora_rank:int = 0):
-        self.config = config
+        Qwen3PreTrainedModel.__init__(self, config)
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
 
@@ -67,17 +71,18 @@ class Model(Qwen3PreTrainedModel, Qwen3Model):
 
 class MTPModule(nn.Module):
     def __init__(self, config):
+        super().__init__()
         self.norm1 = Qwen3RMSNorm(config.hidden_size, config.rms_norm_eps)
         self.norm2 = Qwen3RMSNorm(config.hidden_size, config.rms_norm_eps)
-        self.fc = nn.Linear(config.hidden_size, config.hidden_size)
+        self.fc = nn.Linear(config.hidden_size*2, config.hidden_size)
         self.block = Block(config, 0)
 
-    def forward(self, last, new_tok):
+    def forward(self, last, new_tok, attention_mask = None, position_ids = None, past_key_values = None, use_cache = False, position_embeddings = None, **kwargs):
         last = self.norm1(last)
         new_tok = self.norm2(new_tok)
 
-        hidden = self.fc(torch.cat(last, new_tok, dim=1))
-        hidden = self.block(hidden)
+        hidden = self.fc(torch.cat([last, new_tok], dim=-1))
+        hidden = self.block(hidden, attention_mask, position_ids, past_key_values, use_cache, position_embeddings, **kwargs)
 
         return hidden
 
@@ -87,19 +92,65 @@ class MTP(Qwen3PreTrainedModel, GenerationMixin):
     _pp_plan = {"lm_head": (["hidden_states"], ["logits"])}
     _fsdp_plan = {"lm_head": "keep_full_weight"}
 
-    def __init__(self, config):
+    def __init__(self, config, dropout_rate:float = 0.07, lora_rank:int = 0, mtp_depth:int = 3):
         super().__init__(config)
-        self.model = Model(config)
+        self.model = Model(config, dropout_rate=dropout_rate, lora_rank=lora_rank)
         self.vocab_size = config.vocab_size
 
         self.emb = self.model.embed_tokens
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.mtp_depth = mtp_depth
+        self.mtp_modules = nn.ModuleList([MTPModule(config) for _ in range(mtp_depth)])
 
         # Initialize weights and apply final processing
         self.post_init()
 
-    def forward():
-        pass
+    def forward(self, input_ids, attention_mask=None, position_ids=None, past_key_values=None, use_cache=False, position_embeddings=None, **kwargs):
+        #hidden = torch.cat([self.emb(input_ids), torch.zeros(input_ids.shape[0], self.mtp_depth, self.config.hidden_size)], dim=1)
+        
+        assert use_cache==False and past_key_values is None, "MTP does NOT support evaluation or inference mode!"
+
+
+        emb = self.emb(input_ids)
+        hidden = torch.cat(
+            [
+                emb, 
+                torch.zeros(input_ids.shape[0], self.mtp_depth, self.config.hidden_size, device=emb.device, dtype=emb.dtype)
+            ],
+            dim=1
+        )
+        output = self.model.forward(
+            inputs_embeds=hidden[:, :input_ids.shape[1], :], 
+            attention_mask=attention_mask, position_ids=position_ids, 
+            past_key_values=past_key_values, use_cache=use_cache, 
+            position_embeddings=position_embeddings, **kwargs
+        ).last_hidden_state.unsqueeze(1)
+
+        mtp_out = output
+
+        for i, module in enumerate(self.mtp_modules, start=1):
+            mtp_out = module(
+                mtp_out.squeeze(1),
+                hidden[:, i:i+input_ids.shape[1], :],
+                attention_mask=attention_mask, position_ids=position_ids,
+                past_key_values=past_key_values, use_cache=use_cache,
+                position_embeddings=position_embeddings, **kwargs
+            ).unsqueeze(1)
+            output = torch.cat([output, mtp_out], dim=1)
+
+        # (batch_size, mtp_depth+1, seq_len, hidden_dim)
+        # to (batch_size, mtp_depth+1, seq_len, vocab_size)
+        logits = self.lm_head(output)
+
+        #return logits    # (batch_size, mtp_depth+1, seq_len, vocab_size)
+
+        return CausalLMOutputWithPast(
+            loss=None,
+            logits=logits, # (batch_size, mtp_depth+1, seq_len, vocab_size)
+            past_key_values=None,
+            hidden_states=output, # (batch_size, mtp_depth+1, seq_len, hidden_dim)
+            attentions=None
+        )
 
     @classmethod
     def from_pretrained(cls, *args, **kwargs):
