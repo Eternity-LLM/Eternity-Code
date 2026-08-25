@@ -7,6 +7,8 @@ from transformers.models.qwen3.configuration_qwen3 import Qwen3Config
 from transformers.models.qwen3.modeling_qwen3 import Qwen3RMSNorm, Qwen3RotaryEmbedding, Qwen3DecoderLayer, Qwen3PreTrainedModel, Qwen3Model, Qwen3ForCausalLM
 from transformers import GenerationMixin
 
+from modeling.attn import *
+
 class Embedding(nn.Embedding):
     '''
     Embedding layer with optional LoRA (Low-Rank Adaptation) support. If lora_rank is greater than 0, the embedding layer will include additional low-rank matrices for adaptation.
