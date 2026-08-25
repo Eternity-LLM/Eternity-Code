@@ -70,9 +70,11 @@ class Block(Qwen3DecoderLayer):
     - __init__(config, layer_idx, dropout_rate): Initializes the Block with the given configuration, layer index, and dropout rate.
     - forward(hidden_states, attention_mask, position_ids, past_key_values, use_cache, position_embeddings, **kwargs): Performs the forward pass through the decoder layer and applies dropout to the output hidden states.
     '''
-    def __init__(self, config, layer_idx, dropout_rate:float = 0.07):
+    def __init__(self, config, layer_idx, dropout_rate:float = 0.07, use_eternity_attention:bool=True):
         super().__init__(config, layer_idx)
         self.dropout = nn.Dropout(p=dropout_rate)
+        if use_eternity_attention:
+            self.self_attn.config._attn_implementation = 'eternity-attention'
 
     def forward(self, hidden_states, attention_mask = None, position_ids = None, past_key_values = None, use_cache = False, position_embeddings = None, **kwargs):
         return self.dropout(super().forward(hidden_states, attention_mask, position_ids, past_key_values, use_cache, position_embeddings, **kwargs))
