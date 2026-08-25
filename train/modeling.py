@@ -133,6 +133,7 @@ class MTP(Qwen3PreTrainedModel, GenerationMixin):
     - __init__(config, dropout_rate, lora_rank, mtp_depth): Initializes the MTP model with the given configuration, dropout rate, LoRA rank, and MTP depth.
     - forward(input_ids, attention_mask, position_ids, past_key_values, use_cache, position_embeddings, **kwargs): Performs the forward pass through the MTP model, handling both training and inference modes.
     - load_qwen3(qwen3): Loads weights from a Qwen3ForCausalLM model into the MTP model.
+    - qwen3(): Returns a Qwen3ForCausalLM model with the weights from the MTP model.
     - from_pretrained(*args, **kwargs): Raises NotImplementedError, indicating that MTP.from_pretrained is not implemented and suggesting to use MTP.load_qwen3(Qwen3ForCausalLM.from_pretrained(...)) instead.
 
     Note:
@@ -212,6 +213,18 @@ class MTP(Qwen3PreTrainedModel, GenerationMixin):
     def load_qwen3(self, qwen3:Qwen3ForCausalLM):
         self.model.load_state_dict(qwen3.model.state_dict(), strict=False)
         self.lm_head.load_state_dict(qwen3.lm_head.state_dict(), strict=False)
+
+    def qwen3(self):
+        qwen3 = Qwen3ForCausalLM(self.config)
+        rank = 0
+        if self.emb.rank > 0:
+            rank = self.emb.rank
+            self.emb.disable_lora()
+        qwen3.model.load_state_dict(self.model.state_dict(), strict=False)
+        qwen3.lm_head.load_state_dict(self.lm_head.state_dict(), strict=False)
+        if rank > 0:
+            self.emb.enable_lora(rank)
+        return qwen3
 
     @classmethod
     def from_pretrained(cls, *args, **kwargs):
