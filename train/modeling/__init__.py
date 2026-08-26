@@ -1,1 +1,1 @@
-__all__ = ['modeling', 'attn']
+__all__ = ['modeling', 'attn', 'kernel']
