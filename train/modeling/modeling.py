@@ -70,13 +70,28 @@ class Block(Qwen3DecoderLayer):
     - __init__(config, layer_idx, dropout_rate): Initializes the Block with the given configuration, layer index, and dropout rate.
     - forward(hidden_states, attention_mask, position_ids, past_key_values, use_cache, position_embeddings, **kwargs): Performs the forward pass through the decoder layer and applies dropout to the output hidden states.
     '''
-    def __init__(self, config:Qwen3Config, layer_idx:int, dropout_rate:float = 0.07, use_eternity_attention:bool=True)->None:
+    def __init__(
+        self,
+        config:Qwen3Config,
+        layer_idx:int,
+        dropout_rate:float = 0.07,
+        use_eternity_attention:bool=True
+    )->None:
         super().__init__(config, layer_idx)
         self.dropout = nn.Dropout(p=dropout_rate)
         if use_eternity_attention:
             self.self_attn.config._attn_implementation = 'eternity-attention'
 
-    def forward(self, hidden_states:torch.Tensor, attention_mask:torch.Tensor = None, position_ids = None, past_key_values = None, use_cache:bool = False, position_embeddings = None, **kwargs)->torch.Tensor:
+    def forward(
+        self, 
+        hidden_states:torch.Tensor, 
+        attention_mask:torch.Tensor = None, 
+        position_ids = None, 
+        past_key_values = None, 
+        use_cache:bool = False, 
+        position_embeddings = None, 
+        **kwargs
+    )->torch.Tensor:
         return self.dropout(super().forward(hidden_states, attention_mask, position_ids, past_key_values, use_cache, position_embeddings, **kwargs))
 
 class Model(Qwen3Model):
@@ -120,7 +135,16 @@ class MTPModule(nn.Module):
         self.fc = nn.Linear(config.hidden_size*2, config.hidden_size)
         self.block = Block(config, layer_idx, dropout_rate)
 
-    def forward(self, last:torch.Tensor, new_tok:torch.Tensor, attention_mask:torch.Tensor|None = None, position_ids = None, past_key_values = None, use_cache:bool = False, position_embeddings = None, **kwargs)->torch.Tensor:
+    def forward(
+        self, 
+        last:torch.Tensor, new_tok:torch.Tensor, 
+        attention_mask:torch.Tensor|None = None, 
+        position_ids = None, 
+        past_key_values = None, 
+        use_cache:bool = False, 
+        position_embeddings = None, 
+        **kwargs
+    )->torch.Tensor:
         last = self.norm1(last)
         new_tok = self.norm2(new_tok)
 
@@ -169,7 +193,17 @@ class MTP(Qwen3PreTrainedModel, GenerationMixin):
         # Initialize weights and apply final processing
         self.post_init()
 
-    def forward(self, input_ids:torch.Tensor, attention_mask:torch.Tensor|None=None, position_ids=None, past_key_values=None, use_cache:bool=False, position_embeddings=None, **kwargs)->CausalLMOutputWithPast:
+    def forward(
+        self, 
+        input_ids:torch.Tensor, 
+        attention_mask:torch.Tensor|None=None, 
+        position_ids=None, 
+        past_key_values=None, 
+        labels: torch.Tensor | None = None,
+        use_cache:bool=False, 
+        position_embeddings=None, 
+        **kwargs
+    )->CausalLMOutputWithPast:
         if self.training:
             assert use_cache==False and past_key_values is None, "Train mode does not support use_cache or past_key_values"
 
@@ -204,15 +238,32 @@ class MTP(Qwen3PreTrainedModel, GenerationMixin):
             # to (batch_size, mtp_depth+1, seq_len, vocab_size)
             logits = self.lm_head(output)
 
+            # Compute loss
+            loss = None
+            if labels is not None:
+                loss = 0.0
+                labels = torch.cat(
+                    [labels,
+                    torch.zeros(labels.shape[0], self.mtp_depth, self.config.hidden_size, device=labels.device, dtype=labels.dtype)],
+                    dim=1
+                )
+                for i in range(logits.shape[1]):
+                    loss = loss + self.loss_function(
+                        logits=logits[:, i, ...], 
+                        labels=labels[:, i:i+input_ids.shape[1], ...], 
+                        vocab_size=self.config.vocab_size, **kwargs
+                    )
+
+
             return CausalLMOutputWithPast(
-                loss=None,
+                loss=loss,
                 logits=logits, # (batch_size, mtp_depth+1, seq_len, vocab_size)
                 past_key_values=None,
                 hidden_states=output, # (batch_size, mtp_depth+1, seq_len, hidden_dim)
                 attentions=None
             )
         else:
-            return Qwen3ForCausalLM.forward(self, input_ids, attention_mask=attention_mask, position_ids=position_ids, past_key_values=past_key_values, use_cache=use_cache, position_embeddings=position_embeddings, **kwargs)
+            return Qwen3ForCausalLM.forward(self, input_ids, attention_mask=attention_mask, position_ids=position_ids, past_key_values=past_key_values, labels=labels, use_cache=use_cache, position_embeddings=position_embeddings, **kwargs)
 
     def load_qwen3(self, qwen3:Qwen3ForCausalLM)->None:
         self.model.load_state_dict(qwen3.model.state_dict(), strict=False)
