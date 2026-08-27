@@ -287,5 +287,5 @@ class MTP(Qwen3PreTrainedModel, GenerationMixin):
         return qwen3
 
     @classmethod
-    def from_pretrained(cls, *args, **kwargs):
-        raise NotImplementedError("MTP.from_pretrained is not implemented. Use MTP.load_qwen3(Qwen3ForCausalLM.from_pretrained(...)) to load weights from a Qwen3ForCausalLM model.")
+    def from_pretrained(cls, *args, **kwargs)->None:
+        raise NotImplementedError("`MTP.from_pretrained` is not implemented. Use `your_model.load_qwen3(Qwen3ForCausalLM.from_pretrained(...))` instead. See `help(MTP)` for more information.")
