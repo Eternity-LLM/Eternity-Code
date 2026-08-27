@@ -6,8 +6,12 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.models.qwen3.configuration_qwen3 import Qwen3Config
 from transformers.models.qwen3.modeling_qwen3 import Qwen3RMSNorm, Qwen3RotaryEmbedding, Qwen3DecoderLayer, Qwen3PreTrainedModel, Qwen3Model, Qwen3ForCausalLM
 from transformers import GenerationMixin
+from transformers.cache_utils import Cache
 
 from modeling.attn import *
+
+from collections.abc import Callable
+from typing import Tuple
 
 class Embedding(nn.Embedding):
     '''
@@ -85,11 +89,11 @@ class Block(Qwen3DecoderLayer):
     def forward(
         self, 
         hidden_states:torch.Tensor, 
-        attention_mask:torch.Tensor = None, 
-        position_ids = None, 
-        past_key_values = None, 
+        attention_mask:torch.Tensor|None = None, 
+        position_ids:torch.Tensor|None = None, 
+        past_key_values:Cache|None = None, 
         use_cache:bool = False, 
-        position_embeddings = None, 
+        position_embeddings:Tuple[torch.Tensor,torch.Tensor]|None = None, 
         **kwargs
     )->torch.Tensor:
         return self.dropout(super().forward(hidden_states, attention_mask, position_ids, past_key_values, use_cache, position_embeddings, **kwargs))
@@ -139,10 +143,10 @@ class MTPModule(nn.Module):
         self, 
         last:torch.Tensor, new_tok:torch.Tensor, 
         attention_mask:torch.Tensor|None = None, 
-        position_ids = None, 
-        past_key_values = None, 
+        position_ids:torch.Tensor|None = None, 
+        past_key_values:Cache|None = None, 
         use_cache:bool = False, 
-        position_embeddings = None, 
+        position_embeddings:Tuple[torch.Tensor,torch.Tensor]|None = None, 
         **kwargs
     )->torch.Tensor:
         last = self.norm1(last)
@@ -194,14 +198,15 @@ class MTP(Qwen3PreTrainedModel, GenerationMixin):
         self.post_init()
 
     def forward(
-        self, 
-        input_ids:torch.Tensor, 
-        attention_mask:torch.Tensor|None=None, 
-        position_ids=None, 
-        past_key_values=None, 
-        labels: torch.Tensor | None = None,
-        use_cache:bool=False, 
-        position_embeddings=None, 
+        self,
+        input_ids:torch.Tensor,
+        attention_mask:torch.Tensor|None=None,
+        position_ids:torch.Tensor|None=None,
+        past_key_values:Cache|None=None,
+        labels:torch.Tensor|None = None,
+        use_cache:bool=False,
+        position_embeddings=None,
+        loss_function:Callable|None = None,
         **kwargs
     )->CausalLMOutputWithPast:
         if self.training:
@@ -240,7 +245,7 @@ class MTP(Qwen3PreTrainedModel, GenerationMixin):
 
             # Compute loss
             loss = None
-            if labels is not None:
+            if labels is not None and loss_function is not None:
                 loss = 0.0
                 labels = torch.cat(
                     [labels,
@@ -248,7 +253,7 @@ class MTP(Qwen3PreTrainedModel, GenerationMixin):
                     dim=1
                 )
                 for i in range(logits.shape[1]):
-                    loss = loss + self.loss_function(
+                    loss = loss + loss_function(
                         logits=logits[:, i, ...], 
                         labels=labels[:, i:i+input_ids.shape[1], ...], 
                         vocab_size=self.config.vocab_size, **kwargs
