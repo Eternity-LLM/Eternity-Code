@@ -19,7 +19,7 @@ class Embedding(nn.Embedding):
     - enable_lora(rank): Enables LoRA with the specified rank, freezing the original embedding weights and initializing the LoRA matrices.
     - disable_lora(): Disables LoRA, merging the LoRA adaptation into the original embedding weights and freeing the LoRA matrices.
     '''
-    def __init__(self, vocab_size:int, dim:int, lora_rank:int = 0):
+    def __init__(self, vocab_size:int, dim:int, lora_rank:int = 0)->None:
         assert lora_rank >= 0, "lora_rank must be non-negative"
 
         super().__init__(vocab_size, dim)
@@ -31,14 +31,14 @@ class Embedding(nn.Embedding):
         self.lora_A, self.lora_B = None, None
         self.enable_lora(lora_rank) if lora_rank > 0 else None
 
-    def forward(self, input_ids):
+    def forward(self, input_ids:torch.Tensor)->torch.Tensor:
         original = super().forward(input_ids)
         if self.rank > 0:
             lora = F.embedding(input_ids, self.lora_A) @ self.lora_B
             return original + lora
         return original
 
-    def enable_lora(self, rank:int):
+    def enable_lora(self, rank:int)->None:
         assert self.rank==0, 'LoRA is already available'
         assert rank>0, f'Invalid rank {rank}'
         self.rank = rank
@@ -52,7 +52,7 @@ class Embedding(nn.Embedding):
         nn.init.normal_(self.lora_A, std=0.02)
         nn.init.zeros_(self.lora_B)
 
-    def disable_lora(self):
+    def disable_lora(self)->None:
         assert self.rank>0, 'LoRA is not available'
         self.rank = 0
 
@@ -70,13 +70,13 @@ class Block(Qwen3DecoderLayer):
     - __init__(config, layer_idx, dropout_rate): Initializes the Block with the given configuration, layer index, and dropout rate.
     - forward(hidden_states, attention_mask, position_ids, past_key_values, use_cache, position_embeddings, **kwargs): Performs the forward pass through the decoder layer and applies dropout to the output hidden states.
     '''
-    def __init__(self, config, layer_idx, dropout_rate:float = 0.07, use_eternity_attention:bool=True):
+    def __init__(self, config:Qwen3Config, layer_idx:int, dropout_rate:float = 0.07, use_eternity_attention:bool=True)->None:
         super().__init__(config, layer_idx)
         self.dropout = nn.Dropout(p=dropout_rate)
         if use_eternity_attention:
             self.self_attn.config._attn_implementation = 'eternity-attention'
 
-    def forward(self, hidden_states, attention_mask = None, position_ids = None, past_key_values = None, use_cache = False, position_embeddings = None, **kwargs):
+    def forward(self, hidden_states:torch.Tensor, attention_mask:torch.Tensor = None, position_ids = None, past_key_values = None, use_cache:bool = False, position_embeddings = None, **kwargs)->torch.Tensor:
         return self.dropout(super().forward(hidden_states, attention_mask, position_ids, past_key_values, use_cache, position_embeddings, **kwargs))
 
 class Model(Qwen3Model):
@@ -87,7 +87,7 @@ class Model(Qwen3Model):
     - __init__(config, dropout_rate, lora_rank): Initializes the Model with the given configuration, dropout rate, and optional LoRA rank. The embedding layer will use LoRA if lora_rank is greater than 0.
     - forward(inputs_embeds, attention_mask, position_ids, past_key_values, use_cache, position_embeddings, **kwargs): Performs the forward pass through the model, using the embedding layer and the decoder layers to produce the output hidden states.
     '''
-    def __init__(self, config:Qwen3Config, dropout_rate:float = 0.07, lora_rank:int = 0):
+    def __init__(self, config:Qwen3Config, dropout_rate:float = 0.07, lora_rank:int = 0)->None:
         Qwen3PreTrainedModel.__init__(self, config)
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
@@ -113,14 +113,14 @@ class MTPModule(nn.Module):
     - __init__(config, layer_idx, dropout_rate): Initializes the MTPModule with the given configuration, layer index, and dropout rate.
     - forward(last, new_tok, attention_mask, position_ids, past_key_values, use_cache, position_embeddings, **kwargs): Performs the forward pass through the MTPModule, combining the last hidden state and new token embeddings, and passing them through a linear layer and a Block for further processing.
     '''
-    def __init__(self, config, layer_idx:int = 0, dropout_rate:float = 0.07):
+    def __init__(self, config:Qwen3Config, layer_idx:int = 0, dropout_rate:float = 0.07)->None:
         super().__init__()
         self.norm1 = Qwen3RMSNorm(config.hidden_size, config.rms_norm_eps)
         self.norm2 = Qwen3RMSNorm(config.hidden_size, config.rms_norm_eps)
         self.fc = nn.Linear(config.hidden_size*2, config.hidden_size)
         self.block = Block(config, layer_idx, dropout_rate)
 
-    def forward(self, last, new_tok, attention_mask = None, position_ids = None, past_key_values = None, use_cache = False, position_embeddings = None, **kwargs):
+    def forward(self, last:torch.Tensor, new_tok:torch.Tensor, attention_mask:torch.Tensor|None = None, position_ids = None, past_key_values = None, use_cache:bool = False, position_embeddings = None, **kwargs)->torch.Tensor:
         last = self.norm1(last)
         new_tok = self.norm2(new_tok)
 
@@ -156,7 +156,7 @@ class MTP(Qwen3PreTrainedModel, GenerationMixin):
     _pp_plan = {"lm_head": (["hidden_states"], ["logits"])}
     _fsdp_plan = {"lm_head": "keep_full_weight"}
 
-    def __init__(self, config, dropout_rate:float = 0.07, lora_rank:int = 0, mtp_depth:int = 3):
+    def __init__(self, config:Qwen3Config, dropout_rate:float = 0.07, lora_rank:int = 0, mtp_depth:int = 3)->None:
         super().__init__(config)
         self.model = Model(config, dropout_rate=dropout_rate, lora_rank=lora_rank)
         self.vocab_size = config.vocab_size
@@ -169,7 +169,7 @@ class MTP(Qwen3PreTrainedModel, GenerationMixin):
         # Initialize weights and apply final processing
         self.post_init()
 
-    def forward(self, input_ids, attention_mask=None, position_ids=None, past_key_values=None, use_cache=False, position_embeddings=None, **kwargs):
+    def forward(self, input_ids:torch.Tensor, attention_mask:torch.Tensor|None=None, position_ids=None, past_key_values=None, use_cache:bool=False, position_embeddings=None, **kwargs)->CausalLMOutputWithPast:
         if self.training:
             assert use_cache==False and past_key_values is None, "Train mode does not support use_cache or past_key_values"
 
@@ -214,11 +214,11 @@ class MTP(Qwen3PreTrainedModel, GenerationMixin):
         else:
             return Qwen3ForCausalLM.forward(self, input_ids, attention_mask=attention_mask, position_ids=position_ids, past_key_values=past_key_values, use_cache=use_cache, position_embeddings=position_embeddings, **kwargs)
 
-    def load_qwen3(self, qwen3:Qwen3ForCausalLM):
+    def load_qwen3(self, qwen3:Qwen3ForCausalLM)->None:
         self.model.load_state_dict(qwen3.model.state_dict(), strict=False)
         self.lm_head.load_state_dict(qwen3.lm_head.state_dict(), strict=False)
 
-    def qwen3(self):
+    def qwen3(self)->Qwen3ForCausalLM:
         qwen3 = Qwen3ForCausalLM(self.config)
         rank = 0
         if self.emb.rank > 0:
