@@ -38,7 +38,8 @@ class GRPOTrainer:
 
             prob_cur = self._compute_prob(self.policy, oi)
             if prob_old is None:
-                prob_old = self._compute_prob(self.old, oi)
+                with torch.inference_mode():
+                    prob_old = self._compute_prob(self.old, oi)
             prob_ref = prob_old
 
             frac = torch.exp(torch.log(prob_cur)-torch.log(prob_old))
@@ -52,7 +53,7 @@ class GRPOTrainer:
             sum += obj
         return sum / sz
 
-        
+    @torch.inference_mode()
     def _sampler(self, model:Qwen3ForCausalLM, group_size:int, input:torch.Tensor)->torch.Tensor:
         pass
     
