@@ -30,7 +30,7 @@ class GRPOTrainer:
         self.eps, self.beta = eps, beta
     
     def _compute_objective(self, group:Group, prob_old:torch.Tensor|None = None)->torch.Tensor:
-        sz = group.size()
+        sz = group.size
         sum = 0.0
         for i in range(sz):
             oi = group.outputs[i]
