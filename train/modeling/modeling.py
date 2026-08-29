@@ -206,7 +206,6 @@ class MTP(Qwen3PreTrainedModel, GenerationMixin):
         labels:torch.Tensor|None = None,
         use_cache:bool=False,
         position_embeddings=None,
-        loss_function:Callable|None = None,
         **kwargs
     )->CausalLMOutputWithPast:
         if self.training:
@@ -245,7 +244,7 @@ class MTP(Qwen3PreTrainedModel, GenerationMixin):
 
             # Compute loss
             loss = None
-            if labels is not None and loss_function is not None:
+            if labels is not None:
                 loss = 0.0
                 labels = torch.cat(
                     [labels,
@@ -253,7 +252,7 @@ class MTP(Qwen3PreTrainedModel, GenerationMixin):
                     dim=1
                 )
                 for i in range(logits.shape[1]):
-                    loss = loss + loss_function(
+                    loss = loss + self.loss_function(
                         logits=logits[:, i, ...], 
                         labels=labels[:, i:i+input_ids.shape[1], ...], 
                         vocab_size=self.config.vocab_size, **kwargs
