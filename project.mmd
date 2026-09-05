@@ -1,0 +1,48 @@
+flowchart TD
+subgraph code["Code"]
+    subgraph trainer["Trainer"]
+        subgraph main["Main"]
+            pipeline["Pipeline"]
+            mcts["MCTS"]
+            mcts-->pipeline
+        end
+
+        subgraph algorithm["Algorithm"]
+            optim["Muon Optimizer"]~~~
+            grpo["GRPO"]
+        end
+        subgraph modeling["Modeling"]
+            MTP~~~
+            Qwen3
+            Qwen3-->MTP
+        end
+        subgraph data["Dataset Utils"]
+            gen["Dataset Generator"]~~~
+            load["Dataset Loader"]
+        end
+        subgraph rlreward["RL Reward Fn"]
+            subgraph oj["Online Judge"]
+                Judger
+                Sandbox-->Judger
+                ojetc["..."]-->Judger
+            end
+            etc["..."]
+        end
+        subgraph eval["Evaluator"]
+            ...
+        end
+
+
+        main~~~algorithm
+        main~~~modeling
+        main~~~data
+        main~~~rlreward
+        main~~~eval
+
+        algorithm-->main
+        modeling-->main
+        data-->main
+        rlreward-->main
+        eval-->main
+    end
+end
